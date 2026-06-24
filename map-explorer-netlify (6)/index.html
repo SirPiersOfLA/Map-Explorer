@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patchwork — Map Explorer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css"/>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='20' height='20' fill='%232a52be'/><rect x='20' width='20' height='20' fill='%231a7a5e'/><rect y='20' width='20' height='20' fill='%238b4fa8'/><rect x='20' y='20' width='20' height='20' fill='%23c45c2a'/></svg>">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --navy: #16213e; --blue: #2a52be; --green: #1a7a5e;
+  --gold: #c45c2a; --purple: #8b4fa8;
+  --bg: #f5f3ef; --card: #fff; --text: #1e293b;
+  --muted: #64748b; --border: #e2e8f0;
+  --mono: 'Courier New', monospace;
+}
+html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+
+/* ── Header ── */
+header {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+  height: 52px; background: var(--navy);
+  display: flex; align-items: center; padding: 0 1rem; gap: 10px;
+}
+.quilt { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 26px; height: 26px; flex-shrink: 0; }
+.quilt span { border-radius: 2px; }
+.brand { font-size: 16px; font-weight: 600; color: #fff; }
+.brand-sub { font-size: 12px; color: rgba(255,255,255,0.4); font-weight: 300; }
+.header-hint { margin-left: auto; font-size: 12px; color: rgba(255,255,255,0.5); display: flex; align-items: center; gap: 6px; }
+.header-hint i { font-size: 14px; }
+
+/* ── Layout ── */
+.app { display: flex; height: 100vh; padding-top: 52px; }
+
+/* ── Map ── */
+#map { flex: 1; height: 100%; cursor: crosshair; }
+
+/* ── Side panel ── */
+#panel {
+  width: 320px; flex-shrink: 0; height: 100%;
+  background: var(--card); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+  transition: width .3s ease;
+}
+
+/* ── Panel states ── */
+#panelEmpty {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; height: 100%; padding: 2rem; text-align: center; gap: 16px;
+}
+.empty-quilt { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; width: 48px; height: 48px; }
+.empty-quilt span { border-radius: 3px; }
+#panelEmpty h3 { font-size: 15px; font-weight: 500; color: var(--text); }
+#panelEmpty p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+#panelLoading {
+  display: none; flex-direction: column; align-items: center;
+  justify-content: center; height: 100%; gap: 12px;
+}
+.spinner {
+  width: 32px; height: 32px;
+  border: 3px solid var(--border); border-top-color: var(--blue);
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#panelLoading p { font-size: 13px; color: var(--muted); }
+
+#panelResults { display: none; flex-direction: column; height: 100%; overflow-y: auto; }
+
+/* ── Panel content ── */
+.panel-header {
+  padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+  background: var(--navy); color: #fff; flex-shrink: 0;
+}
+.panel-zip { font-family: var(--mono); font-size: 20px; font-weight: 500; }
+.panel-city { font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 2px; }
+
+.panel-body { padding: 1rem 1.25rem; flex: 1; }
+
+/* Scores */
+.scores { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 1rem; }
+.score-box {
+  background: var(--bg); border-radius: 12px; padding: 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.score-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.score-val { font-family: var(--mono); font-size: 28px; font-weight: 500; line-height: 1; }
+.score-rating { font-size: 10px; color: var(--muted); }
+
+/* Stats grid */
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 1rem; }
+.stat {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 10px;
+}
+.stat-label { font-size: 10px; color: var(--muted); margin-bottom: 2px; }
+.stat-val { font-size: 13px; font-weight: 500; color: var(--text); }
+
+/* Segment */
+.segment-box {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 1rem;
+}
+.segment-name { font-size: 13px; font-weight: 500; color: var(--text); }
+.segment-stage { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* Nearest store */
+.store-box {
+  border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; margin-bottom: 1rem;
+}
+.store-photo { width: 100%; height: 110px; object-fit: cover; display: block; }
+.store-body { padding: 10px 12px; }
+.store-name { font-size: 13px; font-weight: 500; color: var(--text); }
+.store-dist { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.store-link { font-size: 11px; color: var(--blue); text-decoration: none; display: inline-block; margin-top: 4px; }
+
+/* CTA */
+.cta-btn {
+  display: block; width: 100%; padding: 10px;
+  background: var(--navy); color: #fff; border: none;
+  border-radius: 10px; font-size: 13px; font-weight: 500;
+  cursor: pointer; text-align: center; text-decoration: none;
+  margin-bottom: .5rem;
+}
+.cta-btn:hover { opacity: .85; }
+
+/* Score colours */
+.score-green { color: var(--green); }
+.score-blue  { color: var(--blue); }
+.score-gold  { color: var(--gold); }
+.score-red   { color: #9a3412; }
+
+/* Map score dots */
+.score-dot {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; color: #fff;
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  font-family: monospace; cursor: pointer;
+}
+
+/* Error state */
+.panel-error {
+  display: none; flex-direction: column; align-items: center;
+  justify-content: center; height: 100%; padding: 2rem; text-align: center; gap: 10px;
+}
+.panel-error p { font-size: 13px; color: var(--muted); }
+.panel-error button { padding: 8px 16px; border: 1px solid var(--border); background: var(--card); border-radius: 8px; font-size: 13px; cursor: pointer; color: var(--text); }
+
+/* History dots legend */
+#legend {
+  position: absolute; bottom: 28px; left: 12px; z-index: 999;
+  background: rgba(255,255,255,0.92); border-radius: 8px;
+  padding: 7px 10px; font-size: 11px; color: var(--text);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.12); line-height: 2;
+}
+.leg-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+
+@media (max-width: 700px) {
+  #panel { width: 100%; position: absolute; bottom: 0; left: 0; right: 0; height: 55vh; border-left: none; border-top: 1px solid var(--border); }
+  .app { flex-direction: column; }
+  #map { height: 45vh; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="quilt">
+    <span style="background:#2a52be"></span><span style="background:#1a7a5e"></span>
+    <span style="background:#8b4fa8"></span><span style="background:#c45c2a"></span>
+  </div>
+  <span class="brand">Patchwork</span>
+  <span class="brand-sub">Map Explorer</span>
+  <div class="header-hint">
+    <i class="ti ti-map-pin" aria-hidden="true"></i>
+    Click the map to analyse any location
+  </div>
+</header>
+
+<div class="app">
+  <div style="flex:1;position:relative;">
+    <div id="map"></div>
+    <div id="legend">
+      <div><span class="leg-dot" style="background:#2a52be;border:1.5px solid #fff;"></span> Owned store</div>
+      <div><span class="leg-dot" style="background:#c41e3a;border:1.5px solid #fff;"></span> Leased store</div>
+      <div style="margin-top:4px;border-top:1px solid #e2e8f0;padding-top:4px;">
+      <div><span class="leg-dot" style="background:#1a7a5e"></span>Score 80+</div>
+      <div><span class="leg-dot" style="background:#2a52be;opacity:.5"></span>Score 65–79</div>
+      <div><span class="leg-dot" style="background:#c45c2a"></span>Score 50–64</div>
+      <div><span class="leg-dot" style="background:#94a3b8"></span>Score &lt;50</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel">
+
+    <div id="panelEmpty">
+      <div class="empty-quilt">
+        <span style="background:#2a52be"></span><span style="background:#1a7a5e"></span>
+        <span style="background:#8b4fa8"></span><span style="background:#c45c2a"></span>
+      </div>
+      <h3>Map Explorer</h3>
+      <p>Click anywhere on the map to instantly analyse donor potential, store viability, and neighborhood demographics for that location.</p>
+    </div>
+
+    <div id="panelLoading">
+      <div class="spinner"></div>
+      <p id="loadingMsg">Analysing location...</p>
+    </div>
+
+    <div id="panelError" class="panel-error">
+      <i class="ti ti-map-off" style="font-size:32px;color:var(--muted);" aria-hidden="true"></i>
+      <p id="errorMsg">No data found for this location.</p>
+      <button onclick="resetPanel()">Try again</button>
+    </div>
+
+    <div id="panelResults">
+      <div class="panel-header">
+        <div class="panel-zip" id="rZip"></div>
+        <div class="panel-city" id="rCity"></div>
+      </div>
+      <div class="panel-body">
+
+        <div class="scores">
+          <div class="score-box">
+            <div class="score-label">Donor potential</div>
+            <div class="score-val" id="rDonor"></div>
+            <div class="score-rating" id="rDonorRating"></div>
+          </div>
+          <div class="score-box">
+            <div class="score-label">Store viability</div>
+            <div class="score-val" id="rViab"></div>
+            <div class="score-rating" id="rViabRating"></div>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-label">Population</div>
+            <div class="stat-val" id="rPop"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Median income</div>
+            <div class="stat-val" id="rInc"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Home value</div>
+            <div class="stat-val" id="rHome"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Homeownership</div>
+            <div class="stat-val" id="rOwn"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Median age</div>
+            <div class="stat-val" id="rAge"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">College educated</div>
+            <div class="stat-val" id="rEdu"></div>
+          </div>
+        </div>
+
+        <div class="segment-box">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em;">Neighborhood segment</div>
+          <div class="segment-name" id="rSeg"></div>
+          <div class="segment-stage" id="rStage"></div>
+        </div>
+
+        <div class="store-box" id="storeBox">
+          <img id="storePhoto" class="store-photo" src="" alt="" onerror="this.style.display='none'">
+          <div class="store-body">
+            <div class="store-name" id="storeName"></div>
+            <div class="store-dist" id="storeDist"></div>
+            <a id="storeLink" class="store-link" href="#" target="_blank" rel="noopener">Get directions ↗</a>
+          </div>
+        </div>
+
+        <a id="ctaBtn" class="cta-btn" href="#" target="_blank" rel="noopener">
+          Full analysis in Patchwork <i class="ti ti-external-link" style="font-size:12px;margin-left:4px;" aria-hidden="true"></i>
+        </a>
+        <button onclick="clearDots()" style="width:100%;padding:8px;font-size:12px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:10px;cursor:pointer;">
+          <i class="ti ti-trash" style="font-size:12px;margin-right:4px;" aria-hidden="true"></i>Clear map history
+        </button>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const CENSUS_KEY = 'ad77b8ddd1fcaf10403972ac81756f4b69bb019f';
+const SA_STORES = [{"name":"Orange","street":"180 S Tustin Ave.","zip":"92867","lat":33.7866051,"lng":-117.8362036,"owned":0},{"name":"Fountain Valley","street":"16119 Brookhurst St.","zip":"92708","lat":33.7287095,"lng":-117.9565202,"owned":0},{"name":"Lake Forest","street":"23820 Mercury Rd","zip":"92630","lat":33.62499,"lng":-117.713919,"owned":0},{"name":"Costa Mesa","street":"2126 Harbor Blvd","zip":"92627","lat":33.651803,"lng":-117.918435,"owned":1},{"name":"Huntington Beach","street":"17362 Beach Blvd.","zip":"92647","lat":33.709984,"lng":-117.98857,"owned":0},{"name":"Buena Park","street":"7035 Stanton Ave.","zip":"90621","lat":33.8584,"lng":-117.994229,"owned":1},{"name":"Anaheim Main (La Palma)","street":"1100 N La Palma Pkwy","zip":"92801","lat":33.8485518,"lng":-117.9201958,"owned":1},{"name":"Fairview (Santa Ana)","street":"2601 W 1st. St","zip":"92703","lat":33.7459933,"lng":-117.9037711,"owned":1},{"name":"Katella","street":"1618 Katella Ave","zip":"92802","lat":33.8021074,"lng":-117.9382653,"owned":0},{"name":"Foothill Ranch","street":"26662 Portola Parkway","zip":"92610","lat":33.6813962,"lng":-117.6678984,"owned":0},{"name":"Lancaster","street":"1050 Commerce Center","zip":"93534","lat":34.6717332,"lng":-118.1493615,"owned":0},{"name":"Ming Ave (Bakersfield)","street":"4130 Ming Ave","zip":"93309","lat":35.3409642,"lng":-119.0487744,"owned":0},{"name":"Bakersfield Main","street":"120 19th.Street","zip":"93301","lat":35.376435,"lng":-119.003693,"owned":1},{"name":"Porterville","street":"162 W Olive Street","zip":"93257","lat":36.0655845,"lng":-119.0202257,"owned":1},{"name":"Canoga Park Main","street":"21375 Roscoe Blvd","zip":"91304","lat":34.2202087,"lng":-118.5969028,"owned":1},{"name":"North Hills (Balboa)","street":"10158 Balboa Blvd","zip":"91343","lat":34.2557218,"lng":-118.5014264,"owned":0},{"name":"Newbury Park","street":"2400 W Hillcrest","zip":"93060","lat":34.186485,"lng":-118.926888,"owned":0},{"name":"Encino","street":"16934 Ventura Blvd","zip":"91316","lat":34.1593838,"lng":-118.5025221,"owned":0},{"name":"Tutt","street":"3955 Tutt Blvd","zip":"80922","lat":38.8890306,"lng":-104.7137015,"owned":1},{"name":"Boulder","street":"1701 33rd St","zip":"80301","lat":40.0163819,"lng":-105.2508459,"owned":0},{"name":"Parker","street":"18349 Lincoln Meadows Pkwy","zip":"80134","lat":39.534682,"lng":-104.776388,"owned":1},{"name":"Clovis","street":"1922 Clovis Avenue","zip":"93612","lat":36.8090713,"lng":-119.7013773,"owned":0},{"name":"Blackstone","street":"6574 N Blackstone Ave","zip":"93710","lat":36.8331855,"lng":-119.7894307,"owned":0},{"name":"Visalia","street":"339 NW 3rd Street","zip":"93291","lat":36.340694,"lng":-119.295986,"owned":1},{"name":"Fresno Main","street":"710 S Parallel Ave","zip":"93721","lat":36.735091,"lng":-119.776591,"owned":1},{"name":"Honolulu Main","street":"322 Sumner Street","zip":"96817","lat":21.315504,"lng":-157.866802,"owned":1},{"name":"Kailua","street":"638 Kailua Rd","zip":"96734","lat":21.3948171,"lng":-157.742258,"owned":1},{"name":"Wahiawa","street":"435 Kilani Avenue","zip":"96786","lat":21.4974759,"lng":-158.0304967,"owned":1},{"name":"Waipahu","street":"94-925 Waipahu Street","zip":"96797","lat":21.3865474,"lng":-158.005969,"owned":1},{"name":"Henderson","street":"360 N Stephanie","zip":"89014","lat":36.053762,"lng":-115.045774,"owned":1},{"name":"Durango","street":"4196 S Durango Drive","zip":"89147","lat":36.113242,"lng":-115.278416,"owned":1},{"name":"Silverado","street":"9715 South Maryland Parkway","zip":"89183","lat":36.0128254,"lng":-115.1382181,"owned":0},{"name":"Lake Mead","street":"7361 W Lake Mead Blvd","zip":"89128","lat":36.1948874,"lng":-115.2533436,"owned":0},{"name":"Las Vegas Outlet","street":"2035 Yale Street","zip":"89030","lat":36.1983164,"lng":-115.1362459,"owned":1},{"name":"Torrance","street":"4310 Pacific Coast Hwy","zip":"90505","lat":33.807012,"lng":-118.35986,"owned":0},{"name":"Long Beach Main","street":"1334 Alamitos Ave","zip":"90813","lat":33.7841155,"lng":-118.1770836,"owned":1},{"name":"Downey","street":"9444 E Firestone","zip":"90241","lat":33.9307721,"lng":-118.115528,"owned":1},{"name":"Whittier","street":"14154 Whittier Blvd","zip":"90605","lat":33.9572531,"lng":-118.0210296,"owned":0},{"name":"Alameda","street":"1918 Park Street","zip":"94501","lat":37.770316,"lng":-122.2374273,"owned":0},{"name":"Pleasant Hill","street":"1806 Linda Drive","zip":"94523","lat":37.953097,"lng":-122.061145,"owned":1},{"name":"Oakland Main","street":"601 Webster Street","zip":"94607","lat":37.798289,"lng":-122.272259,"owned":1},{"name":"Pasadena Antique","street":"35 W Waverly Drive","zip":"91105","lat":34.1398347,"lng":-118.1519181,"owned":1},{"name":"Pasadena Main","street":"56 W Del Mar Blvd","zip":"91105","lat":34.1405984,"lng":-118.1520146,"owned":1},{"name":"West Covina","street":"2330 S Azusa Ave","zip":"91792","lat":34.0355544,"lng":-117.9105508,"owned":0},{"name":"Covina","street":"1444 N Citrus Ave","zip":"91722","lat":34.105973,"lng":-117.889564,"owned":1},{"name":"Glendale","street":"333 N Central Avenue","zip":"91203","lat":34.151112,"lng":-118.2581176,"owned":0},{"name":"Alhambra","street":"1010 E Main Street","zip":"91801","lat":34.099848,"lng":-118.116197,"owned":1},{"name":"Casa Grande","street":"1718 E Florence Blvd","zip":"85222","lat":32.880111,"lng":-111.713587,"owned":1},{"name":"Phoenix Main","street":"24 E Mohave Street","zip":"85004","lat":33.431653,"lng":-112.072624,"owned":1},{"name":"Tempe","street":"2324 N Scottsdale Rd","zip":"85281","lat":33.4544397,"lng":-111.9270331,"owned":1},{"name":"Oracle","street":"5757 N Oracle Rd","zip":"85705","lat":32.311731,"lng":-110.9792411,"owned":1},{"name":"Sun City","street":"8702 W Cholla","zip":"85345","lat":33.5875109,"lng":-112.2467276,"owned":1},{"name":"Greenway","street":"1849 W Greenway Rd","zip":"85023","lat":33.6250203,"lng":-112.0977087,"owned":0},{"name":"Chandler","street":"4920 S Arizona Ave","zip":"85248","lat":33.2345412,"lng":-111.8420725,"owned":0},{"name":"Temecula","street":"27525 Jefferson Ave","zip":"92590","lat":33.516542,"lng":-117.162722,"owned":1},{"name":"Perris Main","street":"4201 Orange Ave","zip":"92570","lat":33.8150684,"lng":-117.2399875,"owned":1},{"name":"Corona","street":"1280 E 6th. Street","zip":"92879","lat":33.873899,"lng":-117.546582,"owned":0},{"name":"Magnolia","street":"10020 Magnolia Ave","zip":"92503","lat":33.9141658,"lng":-117.456331,"owned":0},{"name":"Hemet","street":"1400 W Florida Ave","zip":"92543","lat":33.747998,"lng":-116.986622,"owned":1},{"name":"Hesperia","street":"16281 Main Street","zip":"92345","lat":34.4217965,"lng":-117.3080708,"owned":1},{"name":"Victorville","street":"14716 7th. Street","zip":"92395","lat":34.5182909,"lng":-117.311563,"owned":1},{"name":"Redlands","street":"801 W Colton Ave","zip":"92374","lat":34.062643,"lng":-117.191745,"owned":1},{"name":"E. Street","street":"911 E Street","zip":"92408","lat":34.084958,"lng":-117.292982,"owned":1},{"name":"Rancho Cucamonga","street":"12769 Foothill Blvd","zip":"91730","lat":34.1050167,"lng":-117.5262867,"owned":0},{"name":"Pt Loma","street":"3240 Sports Arena Blvd","zip":"92110","lat":32.7535795,"lng":-117.2077752,"owned":0},{"name":"Poway","street":"13020 Poway Rd","zip":"92064","lat":32.957167,"lng":-117.048833,"owned":0},{"name":"Escondido","street":"183 E Washington","zip":"92025","lat":33.126911,"lng":-117.08284,"owned":1},{"name":"Chula Vista","street":"366 Broadway","zip":"91910","lat":32.6355758,"lng":-117.0916141,"owned":0},{"name":"Santee","street":"8828 Cuyamaca St","zip":"92071","lat":32.836672,"lng":-116.984365,"owned":0},{"name":"San Diego Main","street":"7425 Otay Mesa Rd","zip":"92154","lat":32.5674945,"lng":-116.9811086,"owned":1},{"name":"El Cajon Blvd.","street":"6875 El Cajon Blvd","zip":"92115","lat":32.7684533,"lng":-117.0498578,"owned":0},{"name":"South San Francisco","street":"1170 Mission Rd","zip":"94080","lat":37.6620711,"lng":-122.4390303,"owned":0},{"name":"San Rafael","street":"350 Fourth St","zip":"94901","lat":37.972089,"lng":-122.516618,"owned":1},{"name":"Geary","street":"3921 Geary Blvd","zip":"94118","lat":37.7808965,"lng":-122.4617772,"owned":1},{"name":"Santa Rosa","street":"1020 3rd. St.","zip":"95404","lat":38.442747,"lng":-122.706,"owned":1},{"name":"San Francisco Main","street":"1509 Valencia St","zip":"94110","lat":37.748724,"lng":-122.419976,"owned":1},{"name":"San Jose Main","street":"702 W Taylor Street","zip":"95126","lat":37.3395516,"lng":-121.9132649,"owned":1},{"name":"Salinas","street":"326 N Main St","zip":"93901","lat":36.6830517,"lng":-121.6527911,"owned":1},{"name":"Gilroy","street":"6701 Camino Arroyo","zip":"95020","lat":36.999679,"lng":-121.5496074,"owned":1},{"name":"Seaside","street":"1850 Fremont Blvd","zip":"93955","lat":36.6157381,"lng":-121.8417486,"owned":1},{"name":"Blossom Hill","street":"1339 Blossom Hill Rd","zip":"95118","lat":37.2470218,"lng":-121.8869755,"owned":0},{"name":"Santa Monica Main","street":"1658 11th Street","zip":"90404","lat":34.0177773,"lng":-118.4841988,"owned":1},{"name":"Redondo Beach","street":"2406 Artesia Blvd","zip":"90278","lat":33.8726016,"lng":-118.3677764,"owned":1},{"name":"Inglewood (South Bay)","street":"4001 Inglewood Ave","zip":"90278","lat":33.8930444,"lng":-118.3624204,"owned":0},{"name":"Pico","street":"1940 W Pico Blvd","zip":"90006","lat":34.0463478,"lng":-118.2811773,"owned":1},{"name":"Stockton Main","street":"1247 S Wilson Way","zip":"95205","lat":37.9433648,"lng":-121.2686489,"owned":1},{"name":"Modesto","street":"4418 McHenry Ave","zip":"95356","lat":37.703255,"lng":-120.9940273,"owned":0},{"name":"Lodi","street":"520 S Cherokee Ln","zip":"95240","lat":38.1290145,"lng":-121.2584983,"owned":0},{"name":"Chino","street":"5250 Philadelphia St","zip":"91710","lat":34.0343229,"lng":-117.6910612,"owned":0},{"name":"Old Town Pasadena","street":"1135 E Colorado Blvd.","zip":"91101","lat":34.1463176,"lng":-118.1297468,"owned":0},{"name":"Culver City","street":"4520 Sepulveda Blvd.","zip":"90230","lat":34.0019984,"lng":-118.4068525,"owned":0}];
+const STORE_PHOTOS = {"Orange":"orange.jpg","Lake Forest":"lake_forest.jpg","Costa Mesa":"costa_mesa.jpg","Huntington Beach":"huntington_beach.jpg","Buena Park":"buena_park.jpg","Anaheim Main (La Palma)":"anaheim_main_la_palma.jpg","Fairview (Santa Ana)":"fairview_santa_ana.jpg","Katella":"katella.jpg","Foothill Ranch":"foothill_ranch.jpg","Lancaster":"lancaster.jpg","Ming Ave (Bakersfield)":"ming_ave_bakersfield.jpg","Bakersfield Main":"bakersfield_main.jpg","Porterville":"porterville.jpg","Canoga Park Main":"canoga_park_main.jpg","North Hills (Balboa)":"north_hills_balboa.jpg","Newbury Park":"newbury_park.jpg","Encino":"encino.jpg","Tutt":"tutt.jpg","Boulder":"boulder.jpg","Parker":"parker.jpg","Clovis":"clovis.jpg","Blackstone":"blackstone.jpg","Visalia":"visalia.jpg","Fresno Main":"fresno_main.jpg","Honolulu Main":"honolulu_main.jpg","Kailua":"kailua.jpg","Wahiawa":"wahiawa.jpg","Waipahu":"waipahu.jpg","Henderson":"henderson.jpg","Durango":"durango.jpg","Silverado":"silverado.jpg","Lake Mead":"lake_mead.jpg","Torrance":"torrance.jpg","Long Beach Main":"long_beach_main.jpg","Downey":"downey.jpg","Whittier":"whittier.jpg","Alameda":"alameda.jpg","Pleasant Hill":"pleasant_hill.jpg","Oakland Main":"oakland_main.jpg","Pasadena Main":"pasadena_main.jpg","West Covina":"west_covina.jpg","Covina":"covina.jpg","Glendale":"glendale.jpg","Alhambra":"alhambra.jpg","Casa Grande":"casa_grande.jpg","Phoenix Main":"phoenix_main.jpg","Tempe":"tempe.jpg","Oracle":"oracle.jpg","Sun City":"sun_city.jpg","Greenway":"greenway.jpg","Chandler":"chandler.jpg","Temecula":"temecula.jpg","Perris Main":"perris_main.jpg","Corona":"corona.jpg","Magnolia":"magnolia.jpg","Hemet":"hemet.jpg","Hesperia":"hesperia.jpg","Victorville":"victorville.jpg","Redlands":"redlands.jpg","E. Street":"e_street.jpg","Rancho Cucamonga":"rancho_cucamonga.jpg","Pt Loma":"pt_loma.jpg","Poway":"poway.jpg","Escondido":"escondido.jpg","Chula Vista":"chula_vista.jpg","Santee":"santee.jpg","San Diego Main":"san_diego_main.jpg","El Cajon Blvd.":"el_cajon_blvd.jpg","South San Francisco":"south_san_francisco.jpg","San Rafael":"san_rafael.jpg","Geary":"geary.jpg","Santa Rosa":"santa_rosa.jpg","San Francisco Main":"san_francisco_main.jpg","Salinas":"salinas.jpg","Gilroy":"gilroy.jpg","Seaside":"seaside.jpg","Blossom Hill":"blossom_hill.jpg","Santa Monica Main":"santa_monica_main.jpg","Redondo Beach":"redondo_beach.jpg","Inglewood (South Bay)":"inglewood_south_bay.jpg","Pico":"pico.jpg","Modesto":"modesto.jpg","Lodi":"lodi.jpg","Chino":"chino.jpg","Old Town Pasadena":"old_town_pasadena.jpg","Culver City":"culver_city.jpg"};
+const GOOGLE_KEY='AIzaSyBF4CEpUsIQ_HnAJCVP8-8jSPkwwwBSSko';
+
+
+// ── Map setup ─────────────────────────────────────────────────────
+const map = L.map('map', {zoomControl:true, scrollWheelZoom:true}).setView([34.05, -118.24], 8);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom:19
+}).addTo(map);
+
+// Plot existing ARC stores as Salvation Army shield markers
+for(const s of SA_STORES) {
+  const icon = L.divIcon({
+    html:`<div style="width:24px;height:24px;background:${s.owned?'#2a52be':'#c41e3a'};border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;" title="${s.name}">
+      <svg width="13" height="13" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 2 L38 10 L38 24 C38 33 20 40 20 40 C20 40 2 33 2 24 L2 10 Z" fill="#fff" opacity="0.9"/>
+        <path d="M20 8 L32 13 L32 24 C32 30 20 36 20 36 C20 36 8 30 8 24 L8 13 Z" fill="#c41e3a"/>
+        <text x="20" y="26" text-anchor="middle" font-size="14" font-weight="bold" fill="#fff" font-family="Arial">S</text>
+      </svg>
+    </div>`,
+    iconSize:[24,24], iconAnchor:[12,12], className:''
+  });
+  L.marker([s.lat,s.lng],{icon}).addTo(map).bindPopup(`<b>${s.name}</b><br>${s.street}<br><span style='color:${s.owned?'#2a52be':'#c41e3a'};font-size:11px;font-weight:600;'>${s.owned?'Owned':'Leased'}</span>`);
+}
+
+let pin = null;
+const history = []; // {lat,lng,zip,score,marker}
+
+map.on('click', async (e) => {
+  const {lat, lng} = e.latlng;
+  if(pin) map.removeLayer(pin);
+  const pinIcon = L.divIcon({
+    html:`<div style="width:22px;height:22px;background:var(--gold,#c45c2a);border-radius:50%;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.35);animation:pulse 1s ease-out;"></div>`,
+    iconSize:[22,22], iconAnchor:[11,11], className:''
+  });
+  pin = L.marker([lat,lng],{icon:pinIcon}).addTo(map);
+  showLoading();
+  await analyse(lat, lng);
+});
+
+// ── Panel state ───────────────────────────────────────────────────
+function showLoading(msg) {
+  document.getElementById('panelEmpty').style.display = 'none';
+  document.getElementById('panelResults').style.display = 'none';
+  document.getElementById('panelError').style.display = 'none';
+  document.getElementById('panelLoading').style.display = 'flex';
+  document.getElementById('loadingMsg').textContent = msg || 'Analysing location...';
+}
+function showResults() {
+  document.getElementById('panelLoading').style.display = 'none';
+  document.getElementById('panelError').style.display = 'none';
+  document.getElementById('panelResults').style.display = 'flex';
+}
+function showError(msg) {
+  document.getElementById('panelLoading').style.display = 'none';
+  document.getElementById('panelResults').style.display = 'none';
+  document.getElementById('panelError').style.display = 'flex';
+  document.getElementById('errorMsg').textContent = msg;
+}
+function resetPanel() {
+  document.getElementById('panelError').style.display = 'none';
+  document.getElementById('panelEmpty').style.display = 'flex';
+}
+
+// ── Haversine ─────────────────────────────────────────────────────
+function hvDist(lat1,lng1,lat2,lng2) {
+  const R=3959,dLat=(lat2-lat1)*Math.PI/180,dLng=(lng2-lng1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+// ── Nearest store ─────────────────────────────────────────────────
+function nearestStore(lat,lng) {
+  let best=null, min=Infinity;
+  for(const s of SA_STORES){const d=hvDist(lat,lng,s.lat,s.lng);if(d<min){min=d;best=s;}}
+  return {store:best, miles:Math.round(min*10)/10};
+}
+
+// ── Scoring ───────────────────────────────────────────────────────
+function scoreDonor(inc,home,col,eduTot,owned,ownTot,age,multi,vehTot,rooms,pop) {
+  const sInc  = Math.min(20, Math.max(0,(inc-20000)/5000));
+  const sHome = Math.min(20, Math.max(0,(home-50000)/20000));
+  const sEdu  = Math.min(15, col/(eduTot||1)*30);
+  const sOwn  = Math.min(15, owned/(ownTot||1)*20);
+  const sAge  = age>=45?15:age>=25?(age-25)/20*15:0;
+  const sVeh  = Math.min(10, multi/(vehTot||1)*15);
+  const sRoom = Math.min(5, (rooms-3)*2);
+  const base  = sInc+sHome+sEdu+sOwn+sAge+sVeh+sRoom;
+  const popF  = pop>=25000?1.0:pop>=15000?0.95:pop>=8000?0.88:pop>=3000?0.78:0.65;
+  return Math.min(100, Math.round(base*popF));
+}
+
+function donorRating(s) {
+  return s>=90?'Excellent':s>=80?'Strong':s>=70?'Good':s>=50?'Moderate':'Lower potential';
+}
+function viabRating(s) {
+  return s>=85?'Excellent':s>=70?'Strong':s>=55?'Good':s>=40?'Moderate':'Challenging';
+}
+function scoreColor(s) {
+  return s>=80?'score-green':s>=65?'score-blue':s>=50?'score-gold':'score-red';
+}
+function dotColor(s) {
+  return s>=80?'#1a7a5e':s>=65?'#2a52be':s>=50?'#c45c2a':'#94a3b8';
+}
+
+// ── Segment ───────────────────────────────────────────────────────
+function getSegment(inc,home,age,ownPct,colPct,pop) {
+  if(inc>120000&&ownPct>70&&age>45) return {seg:'Affluent Homeowners',stage:'Peak Donor · Stage 2'};
+  if(inc>120000&&age>55) return {seg:'Affluent Empty Nesters',stage:'Peak Donor · Stage 2'};
+  if(inc>80000&&ownPct>65&&age>35&&age<55) return {seg:'Suburban Family Builders',stage:'Peak Donor · Stage 2'};
+  if(age>65&&ownPct>65) return {seg:'Senior Homeowners',stage:'Transitioning · Stage 3'};
+  if(age>60&&ownPct>70) return {seg:'Retirement Communities',stage:'Transitioning · Stage 3'};
+  if(inc>60000&&ownPct>55&&colPct>30) return {seg:'Established Middle',stage:'Peak Donor · Stage 2'};
+  if(colPct>40&&inc>80000) return {seg:'Remote & Creative Class',stage:'Peak Donor · Stage 2'};
+  if(pop<15000) return {seg:'Rural & Small Town',stage:'Transitioning · Stage 3'};
+  if(ownPct<30&&age<35) return {seg:'Urban Renters',stage:'Accumulating · Stage 1'};
+  if(age<30) return {seg:'Young Urban Professionals',stage:'Accumulating · Stage 1'};
+  if(inc<50000) return {seg:'Working Class Communities',stage:'Accumulating · Stage 1'};
+  return {seg:'Diverse Urban Families',stage:'Accumulating · Stage 1'};
+}
+
+// ── Main analysis ─────────────────────────────────────────────────
+async function analyse(lat, lng) {
+  try {
+    showLoading('Finding ZIP code...');
+
+    // Reverse geocode via Google (proxied through Netlify to avoid CORS)
+    const geoR = await fetch(`/census?address=${encodeURIComponent(lat+','+lng)}`);
+    const geoD = await geoR.json();
+    const zip = geoD?.zip;
+
+    if(!zip) { showError('No ZIP code found here. Try clicking closer to a neighbourhood or town.'); return; }
+
+    showLoading(`Loading Census data for ${zip}...`);
+
+    // Census ACS
+    const vars = 'B01003_001E,B19013_001E,B25077_001E,B15003_001E,B15003_022E,B15003_023E,B15003_024E,B15003_025E,B25003_001E,B25003_002E,B01002_001E,B08201_001E,B08201_004E,B08201_005E,B08201_006E,B25018_001E';
+    const acsUrl = `https://api.census.gov/data/2022/acs/acs5?get=${vars}&for=zip+code+tabulation+area:${zip}&key=${CENSUS_KEY}`;
+    const acsR = await fetch(acsUrl);
+    const acsD = await acsR.json();
+    if(!acsD||acsD.length<2) { showError(`No Census data available for ZIP ${zip}.`); return; }
+
+    const headers=acsD[0], row=acsD[1];
+    const gi=k=>parseInt(row[headers.indexOf(k)])||0;
+    const gf=k=>parseFloat(row[headers.indexOf(k)])||0;
+
+    const pop    = gi('B01003_001E');
+    const inc    = gi('B19013_001E');
+    const home   = gi('B25077_001E');
+    const eduTot = gi('B15003_001E')||1;
+    const col    = gi('B15003_022E')+gi('B15003_023E')+gi('B15003_024E')+gi('B15003_025E');
+    const ownTot = gi('B25003_001E')||1;
+    const owned  = gi('B25003_002E');
+    const age    = gf('B01002_001E');
+    const vehTot = gi('B08201_001E')||1;
+    const multi  = gi('B08201_004E')+gi('B08201_005E')+gi('B08201_006E');
+    const rooms  = gf('B25018_001E');
+
+    const ownPct = Math.round(owned/ownTot*100);
+    const colPct = Math.round(col/eduTot*100);
+
+    const donorScore = scoreDonor(inc,home,col,eduTot,owned,ownTot,age,multi,vehTot,rooms,pop);
+    const viabScore  = Math.min(100, Math.round(donorScore*0.88));
+    const {seg, stage} = getSegment(inc,home,age,ownPct,colPct,pop);
+
+    // City name
+    let city = '';
+    try {
+      const zR = await fetch(`https://api.zippopotam.us/us/${zip}`);
+      const zD = await zR.json();
+      city = zD?.places?.[0]?.['place name'] || '';
+    } catch(e){}
+
+    // Nearest store
+    const {store, miles} = nearestStore(lat, lng);
+
+    // ── Render panel ──────────────────────────────────────────────
+    document.getElementById('rZip').textContent = 'ZIP ' + zip;
+    document.getElementById('rCity').textContent = city;
+
+    const dEl = document.getElementById('rDonor');
+    dEl.textContent = donorScore;
+    dEl.className = 'score-val ' + scoreColor(donorScore);
+    document.getElementById('rDonorRating').textContent = donorRating(donorScore);
+
+    const vEl = document.getElementById('rViab');
+    vEl.textContent = viabScore;
+    vEl.className = 'score-val ' + scoreColor(viabScore);
+    document.getElementById('rViabRating').textContent = viabRating(viabScore);
+
+    document.getElementById('rPop').textContent  = pop.toLocaleString();
+    document.getElementById('rInc').textContent  = inc  > 0 ? '$'+Math.round(inc/1000)+'k'  : '—';
+    document.getElementById('rHome').textContent = home > 0 ? '$'+Math.round(home/1000)+'k' : '—';
+    document.getElementById('rOwn').textContent  = ownPct + '%';
+    document.getElementById('rAge').textContent  = Math.round(age*10)/10;
+    document.getElementById('rEdu').textContent  = colPct + '%';
+    document.getElementById('rSeg').textContent  = seg;
+    document.getElementById('rStage').textContent = stage;
+
+    // Nearest store card
+    if(store) {
+      const photoFile = STORE_PHOTOS[store.name];
+      const photoEl = document.getElementById('storePhoto');
+      if(photoFile) { photoEl.src = `/store_photos/${photoFile}`; photoEl.style.display='block'; }
+      else photoEl.style.display = 'none';
+      document.getElementById('storeName').textContent = store.name;
+      document.getElementById('storeDist').textContent = `${store.street} · ${miles} mi away`;
+      document.getElementById('storeLink').href = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(store.street+', '+store.zip)}`;
+    }
+
+    // CTA
+    document.getElementById('ctaBtn').href = `https://arcpatchwork.com?q=${zip}`;
+
+    showResults();
+
+    // Add score dot to map history
+    addHistoryDot(lat, lng, zip, city, donorScore);
+
+  } catch(e) {
+    console.error(e);
+    showError('Could not load data. Check your connection and try again.');
+  }
+}
+
+// ── History dots ──────────────────────────────────────────────────
+function clearDots() {
+  for(const h of history) map.removeLayer(h.marker);
+  history.length = 0;
+}
+
+function addHistoryDot(lat, lng, zip, city, score) {
+  const icon = L.divIcon({
+    html:`<div class="score-dot" style="background:${dotColor(score)};">${score}</div>`,
+    iconSize:[28,28], iconAnchor:[14,14], className:''
+  });
+  const m = L.marker([lat,lng],{icon}).addTo(map);
+  m.bindPopup(`<b>${zip}</b>${city?` — ${city}`:''}<br>Donor score: <b>${score}</b><br><a href="https://arcpatchwork.com?q=${zip}" target="_blank">Full analysis ↗</a>`);
+  history.push({lat,lng,zip,score,marker:m});
+}
+</script>
+
+</body>
+</html>
